@@ -22,6 +22,11 @@ if (string.IsNullOrEmpty(apiKey))
     throw new Exception("OPENROUTER_API_KEY is not set");
 }
 
+ChatTool readTool = ChatTool.CreateFunctionTool(
+    "Read", "Reads a local file and return its contents.");
+
+ChatCompletionOptions chatCompletionOptions = new() { Tools = { readTool } };
+
 var client = new ChatClient(
     model: "anthropic/claude-haiku-4.5",
     credential: new ApiKeyCredential(apiKey),
