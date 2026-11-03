@@ -115,19 +115,35 @@ if (Directory.Exists(skillsDir))
     }
 }
 
-var userPrompt = prompt;
-if (prompt.StartsWith("/"))
-{
-    var parts = prompt[1..].Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries);
-    var skillName = parts[0];
-    var rawArgs = parts.Length > 1 ? parts[1].Trim() : "";
-    var argList = rawArgs.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+var remaining = prompt.TrimStart();
+var expandedBodies = new List<string>();
 
+while (remaining.StartsWith("/"))
+{
+    var parts = remaining.Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries);
+    var skillName = parts[0][1..];
     var skillFile = Path.Combine(skillsDir, skillName, "SKILL.md");
-    if (File.Exists(skillFile))
+
+    if (!string.IsNullOrEmpty(skillName) && File.Exists(skillFile))
     {
         var (_, _, body) = ParseSkillFile(skillFile);
-        userPrompt = Regex.Replace(body, @"\$ARGUMENTS\[(\d+)\]|(\$ARGUMENTS)|\$(\d+)", match =>
+        expandedBodies.Add(body);
+        remaining = parts.Length > 1 ? parts[1].TrimStart() : "";
+    }
+    else
+    {
+        break;
+    }
+}
+
+if (expandedBodies.Count > 0)
+{
+    var rawArgs = remaining.Trim();
+    var argList = rawArgs.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+
+    foreach (var body in expandedBodies)
+    {
+        var substituted = Regex.Replace(body, @"\$ARGUMENTS\[(\d+)\]|(\$ARGUMENTS)|\$(\d+)", match =>
         {
             if (match.Groups[1].Success)
             {
@@ -145,10 +161,13 @@ if (prompt.StartsWith("/"))
             }
             return "";
         });
+        messages.Add(new UserChatMessage(substituted));
     }
 }
-
-messages.Add(new UserChatMessage(userPrompt));
+else
+{
+    messages.Add(new UserChatMessage(prompt));
+}
 
 ChatCompletion response = client.CompleteChat(messages, chatCompletionOptions);
 
