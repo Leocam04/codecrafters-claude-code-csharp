@@ -1,6 +1,7 @@
+using System.ClientModel;
+using System.Text.Json;
 using OpenAI;
 using OpenAI.Chat;
-using System.ClientModel;
 
 if (args.Length < 2 || args[0] != "-p")
 {
@@ -55,12 +56,13 @@ ChatCompletion response = client.CompleteChat(
     chatCompletionOptions
 );
 
-if (response.ToolCalls is { Count : > 0 }) {
-  foreach (var toolCall in response.ToolCalls) 
-  {
-    if (toolCall.FunctionName == "Read") 
+if (response.ToolCalls is { Count: > 0 })
+{
+    foreach (var toolCall in response.ToolCalls)
     {
-      using var doc = JsonDocument.Parse(toolCall.FunctionArguments);
+        if (toolCall.FunctionName == "Read")
+        {
+            using var doc = JsonDocument.Parse(toolCall.FunctionArguments);
             if (doc.RootElement.TryGetProperty("file_path", out var pathProp))
             {
                 var filePath = pathProp.GetString();
@@ -69,9 +71,11 @@ if (response.ToolCalls is { Count : > 0 }) {
                     Console.Write(File.ReadAllText(filePath));
                 }
             }
+        }
     }
-} 
-else if (response.Content is { Count : > 0 }) {
-  Console.Write(response.Content[0].Text);
+}
+else if (response.Content is { Count: > 0 })
+{
+    Console.Write(response.Content[0].Text);
 }
 
