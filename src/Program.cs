@@ -51,43 +51,42 @@ var client = new ChatClient(
     options: new OpenAIClientOptions { Endpoint = new Uri(baseUrl) }
 );
 
-ChatCompletion response = client.CompleteChat(
-    [new UserChatMessage(prompt)],
-    chatCompletionOptions
-);
+List<ChatMessage> messages = [new UserChatMessage(prompt)];
 
-while (response.ToolCalls != null && response.ToolCalls.Count > 0) {
-  messages.Add(new AssistantChatMessage(response));
-  foreach (var call in response.ToolCalls) {
+ChatCompletion response = client.CompleteChat(messages, chatCompletionOptions);
 
-    string toolResponse = _ExecuteTool(call);
-    ToolChatMessage toolMessage = ChatMessage.CreateToolMessage(
-        toolCallId: call.Id, content: toolResponse);
-    messages.Add(toolMessage);
-  }
-
-  response = client.CompleteChat(messages, options);
-}
-
-if (response.ToolCalls is { Count: > 0 })
+while (response.ToolCalls is { Count: > 0 })
 {
-    foreach (var toolCall in response.ToolCalls)
+    messages.Add(new AssistantChatMessage(response));
+
+    foreach (var call in response.ToolCalls)
     {
-        if (toolCall.FunctionName == "Read")
+        string toolResponse = "";
+
+        if (call.FunctionName == "Read")
         {
-            using var doc = JsonDocument.Parse(toolCall.FunctionArguments);
+            using var doc = JsonDocument.Parse(call.FunctionArguments);
             if (doc.RootElement.TryGetProperty("file_path", out var pathProp))
             {
                 var filePath = pathProp.GetString();
                 if (!string.IsNullOrEmpty(filePath))
                 {
-                    Console.Write(File.ReadAllText(filePath));
+                    toolResponse = File.ReadAllText(filePath);
                 }
             }
         }
+
+        ToolChatMessage toolMessage = ChatMessage.CreateToolMessage(
+            toolCallId: call.Id,
+            content: toolResponse
+        );
+        messages.Add(toolMessage);
     }
+
+    response = client.CompleteChat(messages, chatCompletionOptions);
 }
-else if (response.Content is { Count: > 0 })
+
+if (response.Content is { Count: > 0 })
 {
     Console.Write(response.Content[0].Text);
 }
