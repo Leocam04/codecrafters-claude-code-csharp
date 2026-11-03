@@ -123,7 +123,7 @@ if (Directory.Exists(skillsDir))
         var skillFile = Path.Combine(dir, "SKILL.md");
         if (File.Exists(skillFile))
         {
-            var (name, description, _) = ParseSkillFile(skillFile);
+            var (name, description, _, _) = ParseSkillFile(skillFile);
             skillEntries.Add($"- {name}: {description}");
         }
     }
@@ -139,7 +139,7 @@ if (Directory.Exists(skillsDir))
 }
 
 var remaining = prompt.TrimStart();
-var expandedSkills = new List<(string Name, string Folder, string Body)>();
+var expandedSkills = new List<(string Name, string Folder, string Context, string Body)>();
 
 while (remaining.StartsWith("/"))
 {
@@ -149,9 +149,17 @@ while (remaining.StartsWith("/"))
 
     if (!string.IsNullOrEmpty(skillName) && File.Exists(skillFile))
     {
-        var (name, _, body) = ParseSkillFile(skillFile);
-        expandedSkills.Add((name, $"{skillsDir}/{skillName}", body));
+        var (name, _, context, body) = ParseSkillFile(skillFile);
+        if (context == "fork" && expandedSkills.Count > 0)
+        {
+            break;
+        }
+        expandedSkills.Add((name, $"{skillsDir}/{skillName}", context, body));
         remaining = parts.Length > 1 ? parts[1].TrimStart() : "";
+        if (context == "fork")
+        {
+            break;
+        }
     }
     else
     {
@@ -163,7 +171,7 @@ if (expandedSkills.Count > 0)
 {
     var rawArgs = remaining.Trim();
 
-    foreach (var (name, folder, body) in expandedSkills)
+    foreach (var (name, folder, _, body) in expandedSkills)
     {
         var messageContent = FormatSkillInstructions(name, folder, body, rawArgs);
         messages.Add(new UserChatMessage(messageContent));
@@ -174,120 +182,138 @@ else
     messages.Add(new UserChatMessage(prompt));
 }
 
-ChatCompletion response = client.CompleteChat(messages, chatCompletionOptions);
-
-while (response.ToolCalls is { Count: > 0 })
+string finalAnswer = RunAgentLoop(messages);
+if (!string.IsNullOrEmpty(finalAnswer))
 {
-    messages.Add(new AssistantChatMessage(response));
+    Console.Write(finalAnswer);
+}
 
-    foreach (var call in response.ToolCalls)
+string RunAgentLoop(List<ChatMessage> conversationMessages)
+{
+    ChatCompletion response = client.CompleteChat(conversationMessages, chatCompletionOptions);
+
+    while (response.ToolCalls is { Count: > 0 })
     {
-        string toolResponse = "";
+        conversationMessages.Add(new AssistantChatMessage(response));
 
-        if (call.FunctionName == "Read")
+        foreach (var call in response.ToolCalls)
         {
-            using var doc = JsonDocument.Parse(call.FunctionArguments);
-            if (doc.RootElement.TryGetProperty("file_path", out var pathProp))
-            {
-                var filePath = pathProp.GetString();
-                if (!string.IsNullOrEmpty(filePath))
-                {
-                    toolResponse = File.ReadAllText(filePath);
-                }
-            }
-        }
-        else if (call.FunctionName == "Write")
-        {
-            using var doc = JsonDocument.Parse(call.FunctionArguments);
-            if (doc.RootElement.TryGetProperty("file_path", out var pathProp) &&
-                doc.RootElement.TryGetProperty("content", out var contentProp))
-            {
-                var filePath = pathProp.GetString();
-                var content = contentProp.GetString() ?? "";
-                if (!string.IsNullOrEmpty(filePath))
-                {
-                    var dir = Path.GetDirectoryName(filePath);
-                    if (!string.IsNullOrEmpty(dir))
-                    {
-                        Directory.CreateDirectory(dir);
-                    }
-                    File.WriteAllText(filePath, content);
-                    toolResponse = "File written successfully";
-                }
-            }
-        }
-        else if (call.FunctionName == "Bash")
-        {
-            using var doc = JsonDocument.Parse(call.FunctionArguments);
-            if (doc.RootElement.TryGetProperty("command", out var commandProp))
-            {
-                var command = commandProp.GetString();
-                if (!string.IsNullOrEmpty(command))
-                {
-                    var psi = new ProcessStartInfo
-                    {
-                        FileName = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/bash",
-                        RedirectStandardOutput = true,
-                        RedirectStandardError = true,
-                        UseShellExecute = false,
-                        CreateNoWindow = true
-                    };
-                    psi.ArgumentList.Add(OperatingSystem.IsWindows() ? "/c" : "-c");
-                    psi.ArgumentList.Add(command);
+            string toolResponse = "";
 
-                    using var process = Process.Start(psi);
-                    if (process != null)
+            if (call.FunctionName == "Read")
+            {
+                using var doc = JsonDocument.Parse(call.FunctionArguments);
+                if (doc.RootElement.TryGetProperty("file_path", out var pathProp))
+                {
+                    var filePath = pathProp.GetString();
+                    if (!string.IsNullOrEmpty(filePath))
                     {
-                        var stdoutTask = process.StandardOutput.ReadToEndAsync();
-                        var stderrTask = process.StandardError.ReadToEndAsync();
-                        process.WaitForExit();
-                        toolResponse = stdoutTask.Result + stderrTask.Result;
+                        toolResponse = File.ReadAllText(filePath);
                     }
                 }
             }
-        }
-        else if (call.FunctionName == "Skill")
-        {
-            using var doc = JsonDocument.Parse(call.FunctionArguments);
-            if (doc.RootElement.TryGetProperty("name", out var nameProp))
+            else if (call.FunctionName == "Write")
             {
-                var skillName = nameProp.GetString();
-                var rawArgs = doc.RootElement.TryGetProperty("args", out var argsProp)
-                    ? (argsProp.GetString()?.Trim() ?? "")
-                    : "";
-
-                if (!string.IsNullOrEmpty(skillName))
+                using var doc = JsonDocument.Parse(call.FunctionArguments);
+                if (doc.RootElement.TryGetProperty("file_path", out var pathProp) &&
+                    doc.RootElement.TryGetProperty("content", out var contentProp))
                 {
-                    var skillFile = Path.Combine(skillsDir, skillName, "SKILL.md");
-                    if (File.Exists(skillFile))
+                    var filePath = pathProp.GetString();
+                    var content = contentProp.GetString() ?? "";
+                    if (!string.IsNullOrEmpty(filePath))
                     {
-                        var (name, _, body) = ParseSkillFile(skillFile);
-                        toolResponse = FormatSkillInstructions(name, $"{skillsDir}/{skillName}", body, rawArgs);
+                        var dir = Path.GetDirectoryName(filePath);
+                        if (!string.IsNullOrEmpty(dir))
+                        {
+                            Directory.CreateDirectory(dir);
+                        }
+                        File.WriteAllText(filePath, content);
+                        toolResponse = "File written successfully";
                     }
                 }
             }
+            else if (call.FunctionName == "Bash")
+            {
+                using var doc = JsonDocument.Parse(call.FunctionArguments);
+                if (doc.RootElement.TryGetProperty("command", out var commandProp))
+                {
+                    var command = commandProp.GetString();
+                    if (!string.IsNullOrEmpty(command))
+                    {
+                        var psi = new ProcessStartInfo
+                        {
+                            FileName = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/bash",
+                            RedirectStandardOutput = true,
+                            RedirectStandardError = true,
+                            UseShellExecute = false,
+                            CreateNoWindow = true
+                        };
+                        psi.ArgumentList.Add(OperatingSystem.IsWindows() ? "/c" : "-c");
+                        psi.ArgumentList.Add(command);
+
+                        using var process = Process.Start(psi);
+                        if (process != null)
+                        {
+                            var stdoutTask = process.StandardOutput.ReadToEndAsync();
+                            var stderrTask = process.StandardError.ReadToEndAsync();
+                            process.WaitForExit();
+                            toolResponse = stdoutTask.Result + stderrTask.Result;
+                        }
+                    }
+                }
+            }
+            else if (call.FunctionName == "Skill")
+            {
+                using var doc = JsonDocument.Parse(call.FunctionArguments);
+                if (doc.RootElement.TryGetProperty("name", out var nameProp))
+                {
+                    var skillName = nameProp.GetString();
+                    var rawArgs = doc.RootElement.TryGetProperty("args", out var argsProp)
+                        ? (argsProp.GetString()?.Trim() ?? "")
+                        : "";
+
+                    if (!string.IsNullOrEmpty(skillName))
+                    {
+                        var skillFile = Path.Combine(skillsDir, skillName, "SKILL.md");
+                        if (File.Exists(skillFile))
+                        {
+                            var (name, _, context, body) = ParseSkillFile(skillFile);
+                            var instructions = FormatSkillInstructions(name, $"{skillsDir}/{skillName}", body, rawArgs);
+
+                            if (context == "fork")
+                            {
+                                List<ChatMessage> subagentMessages = [new UserChatMessage(instructions)];
+                                var subagentAnswer = RunAgentLoop(subagentMessages);
+                                toolResponse = $"Skill {name} ran in a separate context and returned:\n{subagentAnswer}";
+                            }
+                            else
+                            {
+                                toolResponse = instructions;
+                            }
+                        }
+                    }
+                }
+            }
+
+            ToolChatMessage toolMessage = ChatMessage.CreateToolMessage(
+                toolCallId: call.Id,
+                content: toolResponse
+            );
+            conversationMessages.Add(toolMessage);
         }
 
-        ToolChatMessage toolMessage = ChatMessage.CreateToolMessage(
-            toolCallId: call.Id,
-            content: toolResponse
-        );
-        messages.Add(toolMessage);
+        response = client.CompleteChat(conversationMessages, chatCompletionOptions);
     }
 
-    response = client.CompleteChat(messages, chatCompletionOptions);
+    return response.Content is { Count: > 0 } ? response.Content[0].Text : "";
 }
 
-if (response.Content is { Count: > 0 })
-{
-    Console.Write(response.Content[0].Text);
-}
-
-static (string Name, string Description, string Body) ParseSkillFile(string filePath)
+static (string Name, string Description, string Context, string Body) ParseSkillFile(string filePath)
 {
     var content = File.ReadAllText(filePath);
     var name = Path.GetFileName(Path.GetDirectoryName(filePath)) ?? "";
     var description = "";
+    var context = "";
     var body = content.Trim();
 
     var normalized = content.Replace("\r\n", "\n");
@@ -308,12 +334,13 @@ static (string Name, string Description, string Body) ParseSkillFile(string file
                     var value = line[(colonIndex + 1)..].Trim();
                     if (key == "name") name = value;
                     else if (key == "description") description = value;
+                    else if (key == "context") context = value;
                 }
             }
         }
     }
 
-    return (name, description, body);
+    return (name, description, context, body);
 }
 
 static string FormatSkillInstructions(string name, string folder, string body, string rawArgs)
