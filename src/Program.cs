@@ -90,7 +90,43 @@ var client = new ChatClient(
     options: new OpenAIClientOptions { Endpoint = new Uri(baseUrl) }
 );
 
-List<ChatMessage> messages = [new UserChatMessage(prompt)];
+List<ChatMessage> messages = [];
+
+var skillsDir = ".claude/skills";
+if (Directory.Exists(skillsDir))
+{
+    var skillEntries = new List<string>();
+    foreach (var dir in Directory.GetDirectories(skillsDir))
+    {
+        var skillFile = Path.Combine(dir, "SKILL.md");
+        if (File.Exists(skillFile))
+        {
+            var (name, description, _) = ParseSkillFile(skillFile);
+            skillEntries.Add($"- {name}: {description}");
+        }
+    }
+
+    if (skillEntries.Count > 0)
+    {
+        messages.Add(new SystemChatMessage(
+            "You have access to the following skills:\n\n" + string.Join("\n", skillEntries)
+        ));
+    }
+}
+
+var userPrompt = prompt;
+if (prompt.StartsWith("/"))
+{
+    var skillName = prompt[1..].Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+    var skillFile = Path.Combine(skillsDir, skillName, "SKILL.md");
+    if (File.Exists(skillFile))
+    {
+        var (_, _, body) = ParseSkillFile(skillFile);
+        userPrompt = body;
+    }
+}
+
+messages.Add(new UserChatMessage(userPrompt));
 
 ChatCompletion response = client.CompleteChat(messages, chatCompletionOptions);
 
@@ -178,4 +214,37 @@ while (response.ToolCalls is { Count: > 0 })
 if (response.Content is { Count: > 0 })
 {
     Console.Write(response.Content[0].Text);
+}
+
+static (string Name, string Description, string Body) ParseSkillFile(string filePath)
+{
+    var content = File.ReadAllText(filePath);
+    var name = Path.GetFileName(Path.GetDirectoryName(filePath)) ?? "";
+    var description = "";
+    var body = content.Trim();
+
+    var normalized = content.Replace("\r\n", "\n");
+    if (normalized.StartsWith("---\n"))
+    {
+        var closingIndex = normalized.IndexOf("\n---", 4);
+        if (closingIndex != -1)
+        {
+            var frontmatter = normalized[4..closingIndex];
+            body = normalized[(closingIndex + 4)..].Trim();
+
+            foreach (var line in frontmatter.Split('\n'))
+            {
+                var colonIndex = line.IndexOf(':');
+                if (colonIndex != -1)
+                {
+                    var key = line[..colonIndex].Trim();
+                    var value = line[(colonIndex + 1)..].Trim();
+                    if (key == "name") name = value;
+                    else if (key == "description") description = value;
+                }
+            }
+        }
+    }
+
+    return (name, description, body);
 }
