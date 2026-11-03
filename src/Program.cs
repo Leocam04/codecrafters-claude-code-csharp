@@ -1,6 +1,7 @@
 using System.ClientModel;
 using System.Diagnostics;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using OpenAI;
 using OpenAI.Chat;
 
@@ -117,12 +118,33 @@ if (Directory.Exists(skillsDir))
 var userPrompt = prompt;
 if (prompt.StartsWith("/"))
 {
-    var skillName = prompt[1..].Split(' ', StringSplitOptions.RemoveEmptyEntries)[0];
+    var parts = prompt[1..].Split((char[]?)null, 2, StringSplitOptions.RemoveEmptyEntries);
+    var skillName = parts[0];
+    var rawArgs = parts.Length > 1 ? parts[1].Trim() : "";
+    var argList = rawArgs.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+
     var skillFile = Path.Combine(skillsDir, skillName, "SKILL.md");
     if (File.Exists(skillFile))
     {
         var (_, _, body) = ParseSkillFile(skillFile);
-        userPrompt = body;
+        userPrompt = Regex.Replace(body, @"\$ARGUMENTS\[(\d+)\]|(\$ARGUMENTS)|\$(\d+)", match =>
+        {
+            if (match.Groups[1].Success)
+            {
+                int index = int.Parse(match.Groups[1].Value);
+                return index < argList.Length ? argList[index] : "";
+            }
+            if (match.Groups[2].Success)
+            {
+                return rawArgs;
+            }
+            if (match.Groups[3].Success)
+            {
+                int index = int.Parse(match.Groups[3].Value);
+                return index < argList.Length ? argList[index] : "";
+            }
+            return "";
+        });
     }
 }
 
