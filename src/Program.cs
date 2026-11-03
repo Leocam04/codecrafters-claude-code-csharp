@@ -1,4 +1,5 @@
 using System.ClientModel;
+using System.Diagnostics;
 using System.Text.Json;
 using OpenAI;
 using OpenAI.Chat;
@@ -61,9 +62,26 @@ ChatTool writeTool = ChatTool.CreateFunctionTool(
     """)
 );
 
+ChatTool bashTool = ChatTool.CreateFunctionTool(
+    functionName: "Bash",
+    functionDescription: "Execute a shell command",
+    functionParameters: BinaryData.FromString("""
+    {
+      "type": "object",
+      "required": ["command"],
+      "properties": {
+        "command": {
+          "type": "string",
+          "description": "The command to execute"
+        }
+      }
+    }
+    """)
+);
+
 ChatCompletionOptions chatCompletionOptions = new()
 {
-    Tools = { readTool, writeTool }
+    Tools = { readTool, writeTool, bashTool }
 };
 
 var client = new ChatClient(
@@ -113,6 +131,36 @@ while (response.ToolCalls is { Count: > 0 })
                     }
                     File.WriteAllText(filePath, content);
                     toolResponse = "File written successfully";
+                }
+            }
+        }
+        else if (call.FunctionName == "Bash")
+        {
+            using var doc = JsonDocument.Parse(call.FunctionArguments);
+            if (doc.RootElement.TryGetProperty("command", out var commandProp))
+            {
+                var command = commandProp.GetString();
+                if (!string.IsNullOrEmpty(command))
+                {
+                    var psi = new ProcessStartInfo
+                    {
+                        FileName = OperatingSystem.IsWindows() ? "cmd.exe" : "/bin/bash",
+                        RedirectStandardOutput = true,
+                        RedirectStandardError = true,
+                        UseShellExecute = false,
+                        CreateNoWindow = true
+                    };
+                    psi.ArgumentList.Add(OperatingSystem.IsWindows() ? "/c" : "-c");
+                    psi.ArgumentList.Add(command);
+
+                    using var process = Process.Start(psi);
+                    if (process != null)
+                    {
+                        var stdoutTask = process.StandardOutput.ReadToEndAsync();
+                        var stderrTask = process.StandardError.ReadToEndAsync();
+                        process.WaitForExit();
+                        toolResponse = stdoutTask.Result + stderrTask.Result;
+                    }
                 }
             }
         }
