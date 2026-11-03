@@ -59,25 +59,17 @@ if (response.ToolCalls is { Count : > 0 }) {
   foreach (var toolCall in response.ToolCalls) {
     if (toolCall.FunctionName == "Read") {
       using var doc = JsonDocument.Parse(toolCall.FunctionArguments);
-      if (doc.RootElement.TryGetProperty("file_path", out var pathProp)) {
-        var filePath = pathProp.GetString();
-
-        if (!string.IsNullOrEmpty(filePath))
-          Console.Write(File.ReadAllText(filePath));
-      }
+            if (doc.RootElement.TryGetProperty("file_path", out var pathProp))
+            {
+                var filePath = pathProp.GetString();
+                if (!string.IsNullOrEmpty(filePath))
+                {
+                    Console.Write(File.ReadAllText(filePath));
+                }
     }
   }
 } else if (response.Content is { Count : > 0 }) {
   Console.Write(response.Content[0].Text);
 }
 
-if (response.Content == null || response.Content.Count == 0)
-{
-    throw new Exception("No choices in response");
-}
-
-// You can use print statements as follows for debugging, they'll be visible when running tests.
-Console.Error.WriteLine("Logs from your program will appear here!");
-
-// TODO: Uncomment the line below to pass the first stage
-Console.Write(response.Content[0].Text);
+using System.Text.Json;
