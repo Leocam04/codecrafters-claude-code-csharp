@@ -80,9 +80,30 @@ ChatTool bashTool = ChatTool.CreateFunctionTool(
     """)
 );
 
+ChatTool skillTool = ChatTool.CreateFunctionTool(
+    functionName: "Skill",
+    functionDescription: "Load a skill's instructions into the conversation",
+    functionParameters: BinaryData.FromString("""
+    {
+      "type": "object",
+      "required": ["name"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The name of the skill to use"
+        },
+        "args": {
+          "type": "string",
+          "description": "Optional arguments for the skill"
+        }
+      }
+    }
+    """)
+);
+
 ChatCompletionOptions chatCompletionOptions = new()
 {
-    Tools = { readTool, writeTool, bashTool }
+    Tools = { readTool, writeTool, bashTool, skillTool }
 };
 
 var client = new ChatClient(
@@ -110,13 +131,15 @@ if (Directory.Exists(skillsDir))
     if (skillEntries.Count > 0)
     {
         messages.Add(new SystemChatMessage(
-            "You have access to the following skills:\n\n" + string.Join("\n", skillEntries)
+            "You have access to the following skills:\n\n" +
+            string.Join("\n", skillEntries) +
+            "\n\nIf a skill matches the user's request, call the Skill tool with its name and follow the instructions it returns."
         ));
     }
 }
 
 var remaining = prompt.TrimStart();
-var expandedBodies = new List<string>();
+var expandedSkills = new List<(string Name, string Folder, string Body)>();
 
 while (remaining.StartsWith("/"))
 {
@@ -126,8 +149,8 @@ while (remaining.StartsWith("/"))
 
     if (!string.IsNullOrEmpty(skillName) && File.Exists(skillFile))
     {
-        var (_, _, body) = ParseSkillFile(skillFile);
-        expandedBodies.Add(body);
+        var (name, _, body) = ParseSkillFile(skillFile);
+        expandedSkills.Add((name, $"{skillsDir}/{skillName}", body));
         remaining = parts.Length > 1 ? parts[1].TrimStart() : "";
     }
     else
@@ -136,32 +159,14 @@ while (remaining.StartsWith("/"))
     }
 }
 
-if (expandedBodies.Count > 0)
+if (expandedSkills.Count > 0)
 {
     var rawArgs = remaining.Trim();
-    var argList = rawArgs.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
 
-    foreach (var body in expandedBodies)
+    foreach (var (name, folder, body) in expandedSkills)
     {
-        var substituted = Regex.Replace(body, @"\$ARGUMENTS\[(\d+)\]|(\$ARGUMENTS)|\$(\d+)", match =>
-        {
-            if (match.Groups[1].Success)
-            {
-                int index = int.Parse(match.Groups[1].Value);
-                return index < argList.Length ? argList[index] : "";
-            }
-            if (match.Groups[2].Success)
-            {
-                return rawArgs;
-            }
-            if (match.Groups[3].Success)
-            {
-                int index = int.Parse(match.Groups[3].Value);
-                return index < argList.Length ? argList[index] : "";
-            }
-            return "";
-        });
-        messages.Add(new UserChatMessage(substituted));
+        var messageContent = FormatSkillInstructions(name, folder, body, rawArgs);
+        messages.Add(new UserChatMessage(messageContent));
     }
 }
 else
@@ -241,6 +246,27 @@ while (response.ToolCalls is { Count: > 0 })
                 }
             }
         }
+        else if (call.FunctionName == "Skill")
+        {
+            using var doc = JsonDocument.Parse(call.FunctionArguments);
+            if (doc.RootElement.TryGetProperty("name", out var nameProp))
+            {
+                var skillName = nameProp.GetString();
+                var rawArgs = doc.RootElement.TryGetProperty("args", out var argsProp)
+                    ? (argsProp.GetString()?.Trim() ?? "")
+                    : "";
+
+                if (!string.IsNullOrEmpty(skillName))
+                {
+                    var skillFile = Path.Combine(skillsDir, skillName, "SKILL.md");
+                    if (File.Exists(skillFile))
+                    {
+                        var (name, _, body) = ParseSkillFile(skillFile);
+                        toolResponse = FormatSkillInstructions(name, $"{skillsDir}/{skillName}", body, rawArgs);
+                    }
+                }
+            }
+        }
 
         ToolChatMessage toolMessage = ChatMessage.CreateToolMessage(
             toolCallId: call.Id,
@@ -288,4 +314,31 @@ static (string Name, string Description, string Body) ParseSkillFile(string file
     }
 
     return (name, description, body);
+}
+
+static string FormatSkillInstructions(string name, string folder, string body, string rawArgs)
+{
+    var argList = rawArgs.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries);
+    var substituted = Regex.Replace(body, @"\$ARGUMENTS\[(\d+)\]|(\$ARGUMENTS)|\$(\d+)", match =>
+    {
+        if (match.Groups[1].Success)
+        {
+            int index = int.Parse(match.Groups[1].Value);
+            return index < argList.Length ? argList[index] : "";
+        }
+        if (match.Groups[2].Success)
+        {
+            return rawArgs;
+        }
+        if (match.Groups[3].Success)
+        {
+            int index = int.Parse(match.Groups[3].Value);
+            return index < argList.Length ? argList[index] : "";
+        }
+        return "";
+    });
+
+    return $"Skill: {name} (located at {folder})\n" +
+           $"Paths in the instructions below are relative to that folder.\n\n" +
+           substituted;
 }
