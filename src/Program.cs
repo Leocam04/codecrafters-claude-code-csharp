@@ -23,9 +23,26 @@ if (string.IsNullOrEmpty(apiKey))
 }
 
 ChatTool readTool = ChatTool.CreateFunctionTool(
-    "Read", "Reads a local file and return its contents.");
+    functionName: "Read",
+    functionDescription: "Read and return the contents of a file",
+    functionParameters: BinaryData.FromString("""
+    {
+      "type": "object",
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "The path to the file to read"
+        }
+      },
+      "required": ["file_path"]
+    }
+    """)
+);
 
-ChatCompletionOptions chatCompletionOptions = new() { Tools = { readTool } };
+ChatCompletionOptions chatCompletionOptions = new()
+{
+    Tools = { readTool }
+};
 
 var client = new ChatClient(
     model: "anthropic/claude-haiku-4.5",
@@ -34,7 +51,8 @@ var client = new ChatClient(
 );
 
 ChatCompletion response = client.CompleteChat(
-    [new UserChatMessage(prompt)]
+    [new UserChatMessage(prompt)],
+    chatCompletionOptions
 );
 
 if (response.Content == null || response.Content.Count == 0)
