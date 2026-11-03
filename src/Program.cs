@@ -54,6 +54,21 @@ ChatCompletion response = client.CompleteChat(
     [new UserChatMessage(prompt)],
     chatCompletionOptions
 );
+if (response.ToolCalls is { Count : > 0 }) {
+  foreach (var toolCall in response.ToolCalls) {
+    if (toolCall.FunctionName == "Read") {
+      using var doc = JsonDocument.Parse(toolCall.FunctionArguments);
+      if (doc.RootElement.TryGetProperty("file_path", out var pathProp)) {
+        var filePath = pathProp.GetString();
+
+        if (!string.IsNullOrEmpty(filePath))
+          Console.Write(File.ReadAllText(filePath));
+      }
+    }
+  }
+} else if (response.Content is { Count : > 0 }) {
+  Console.Write(response.Content[0].Text);
+}
 
 if (response.Content == null || response.Content.Count == 0)
 {
