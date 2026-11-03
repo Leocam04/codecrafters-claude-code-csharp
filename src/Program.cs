@@ -54,6 +54,7 @@ ChatCompletion response = client.CompleteChat(
     [new UserChatMessage(prompt)],
     chatCompletionOptions
 );
+
 if (response.ToolCalls is { Count : > 0 }) {
   foreach (var toolCall in response.ToolCalls) {
     if (toolCall.FunctionName == "Read") {
