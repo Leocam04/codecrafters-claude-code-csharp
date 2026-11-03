@@ -56,8 +56,10 @@ ChatCompletion response = client.CompleteChat(
 );
 
 if (response.ToolCalls is { Count : > 0 }) {
-  foreach (var toolCall in response.ToolCalls) {
-    if (toolCall.FunctionName == "Read") {
+  foreach (var toolCall in response.ToolCalls) 
+  {
+    if (toolCall.FunctionName == "Read") 
+    {
       using var doc = JsonDocument.Parse(toolCall.FunctionArguments);
             if (doc.RootElement.TryGetProperty("file_path", out var pathProp))
             {
@@ -66,10 +68,10 @@ if (response.ToolCalls is { Count : > 0 }) {
                 {
                     Console.Write(File.ReadAllText(filePath));
                 }
+            }
     }
-  }
-} else if (response.Content is { Count : > 0 }) {
+} 
+else if (response.Content is { Count : > 0 }) {
   Console.Write(response.Content[0].Text);
 }
 
-using System.Text.Json;
