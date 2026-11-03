@@ -40,9 +40,30 @@ ChatTool readTool = ChatTool.CreateFunctionTool(
     """)
 );
 
+ChatTool writeTool = ChatTool.CreateFunctionTool(
+    functionName: "Write",
+    functionDescription: "Write content to a file",
+    functionParameters: BinaryData.FromString("""
+    {
+      "type": "object",
+      "required": ["file_path", "content"],
+      "properties": {
+        "file_path": {
+          "type": "string",
+          "description": "The path of the file to write to"
+        },
+        "content": {
+          "type": "string",
+          "description": "The content to write to the file"
+        }
+      }
+    }
+    """)
+);
+
 ChatCompletionOptions chatCompletionOptions = new()
 {
-    Tools = { readTool }
+    Tools = { readTool, writeTool }
 };
 
 var client = new ChatClient(
@@ -75,6 +96,26 @@ while (response.ToolCalls is { Count: > 0 })
                 }
             }
         }
+        else if (call.FunctionName == "Write")
+        {
+            using var doc = JsonDocument.Parse(call.FunctionArguments);
+            if (doc.RootElement.TryGetProperty("file_path", out var pathProp) &&
+                doc.RootElement.TryGetProperty("content", out var contentProp))
+            {
+                var filePath = pathProp.GetString();
+                var content = contentProp.GetString() ?? "";
+                if (!string.IsNullOrEmpty(filePath))
+                {
+                    var dir = Path.GetDirectoryName(filePath);
+                    if (!string.IsNullOrEmpty(dir))
+                    {
+                        Directory.CreateDirectory(dir);
+                    }
+                    File.WriteAllText(filePath, content);
+                    toolResponse = "File written successfully";
+                }
+            }
+        }
 
         ToolChatMessage toolMessage = ChatMessage.CreateToolMessage(
             toolCallId: call.Id,
@@ -90,4 +131,3 @@ if (response.Content is { Count: > 0 })
 {
     Console.Write(response.Content[0].Text);
 }
-
