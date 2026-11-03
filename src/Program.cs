@@ -56,6 +56,19 @@ ChatCompletion response = client.CompleteChat(
     chatCompletionOptions
 );
 
+while (response.ToolCalls != null && response.ToolCalls.Count > 0) {
+  messages.Add(new AssistantChatMessage(response));
+  foreach (var call in response.ToolCalls) {
+
+    string toolResponse = _ExecuteTool(call);
+    ToolChatMessage toolMessage = ChatMessage.CreateToolMessage(
+        toolCallId: call.Id, content: toolResponse);
+    messages.Add(toolMessage);
+  }
+
+  response = client.CompleteChat(messages, options);
+}
+
 if (response.ToolCalls is { Count: > 0 })
 {
     foreach (var toolCall in response.ToolCalls)
